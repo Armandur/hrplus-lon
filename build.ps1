@@ -32,6 +32,7 @@ if (Test-Path -LiteralPath $distFull) {
 }
 
 New-Item -ItemType Directory -Path (Join-Path $distFull "vendor") | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $distFull "assets") | Out-Null
 
 $sourceNotice = if (Test-Path -LiteralPath $sourceNoticeFile) {
   [System.IO.File]::ReadAllText($sourceNoticeFile, $utf8)
@@ -41,6 +42,21 @@ $sourceNotice = if (Test-Path -LiteralPath $sourceNoticeFile) {
 
 $html = [System.IO.File]::ReadAllText($sourceIndex, $utf8)
 $html = $html -replace "(?i)^<!doctype html>", "<!doctype html>`r`n$sourceNotice"
+
+$styleMatch = [regex]::Match($html, "(?s)<style>\s*(?<css>.*?)\s*</style>")
+if ($styleMatch.Success) {
+  $css = $styleMatch.Groups["css"].Value.Trim()
+  [System.IO.File]::WriteAllText((Join-Path $distFull "assets\app.css"), $css, $utf8)
+  $html = $html.Remove($styleMatch.Index, $styleMatch.Length).Insert($styleMatch.Index, '<link rel="stylesheet" href="assets/app.css">')
+}
+
+$scriptMatch = [regex]::Match($html, "(?s)<script>\s*(?<js>const APP_INFO[\s\S]*?)\s*</script>")
+if ($scriptMatch.Success) {
+  $js = $scriptMatch.Groups["js"].Value.Trim()
+  [System.IO.File]::WriteAllText((Join-Path $distFull "assets\app.js"), $js, $utf8)
+  $html = $html.Remove($scriptMatch.Index, $scriptMatch.Length).Insert($scriptMatch.Index, '<script src="assets/app.js"></script>')
+}
+
 $html = $html -replace "(\r?\n){3,}", "`r`n`r`n"
 
 [System.IO.File]::WriteAllText((Join-Path $distFull "index.html"), $html, $utf8)
