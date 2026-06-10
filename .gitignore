@@ -1,0 +1,21 @@
+# Local payroll/export files. These must never be committed.
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.pdf
+
+# Local/editor/system noise.
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.temp
+~$*
+
+# Dependency folders if tooling is added later.
+node_modules/
+
+# Keep dist committed for Cloudflare Pages.
+!dist/
+!dist/**
