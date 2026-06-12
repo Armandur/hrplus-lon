@@ -181,7 +181,7 @@ const APP_INFO = {
         if (!firstSheetName) throw new Error("Filen innehåller inget kalkylblad.");
 
         const sheet = workbook.Sheets[firstSheetName];
-        const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: true });
+        const rawRows = extractRowsFromSheet(sheet);
         if (!rawRows.length) throw new Error("Kalkylbladet innehåller inga datarader.");
 
         validateColumns(rawRows[0]);
@@ -191,6 +191,95 @@ const APP_INFO = {
         resetData();
         setStatus(error.message || "Kunde inte läsa filen.", true);
       }
+    }
+
+    function extractRowsFromSheet(sheet) {
+      const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+      const transactionRows = parseTransactionList(matrix);
+      if (transactionRows.length) return transactionRows;
+      return XLSX.utils.sheet_to_json(sheet, { defval: "", raw: true });
+    }
+
+    function parseTransactionList(matrix) {
+      const headerIndex = matrix.findIndex((row) => {
+        const labels = row.map((cell) => cleanText(cell).toLowerCase());
+        return labels.includes("arbetstagare")
+          && labels.includes("namn")
+          && labels.includes("löneart")
+          && labels.includes("belopp");
+      });
+      if (headerIndex === -1) return [];
+
+      const header = matrix[headerIndex].map(cleanText);
+      const employeeIndex = header.findIndex((value) => value === "Arbetstagare");
+      const nameIndex = header.findIndex((value) => value === "Namn");
+      const typeIndex = header.findIndex((value) => value === "Typ");
+      const payItemIndex = header.findIndex((value) => value === "Löneart");
+      const accountIndex = header.findIndex((value) => value === "Konto");
+      const costCenterIndex = header.findIndex((value) => value === "Avvikande kostnadsställe");
+      const amountIndex = header.findIndex((value) => value === "Belopp");
+      const paymentDate = findTransactionPaymentDate(matrix);
+
+      if (employeeIndex === -1 || nameIndex === -1 || payItemIndex === -1 || amountIndex === -1) return [];
+
+      return matrix.slice(headerIndex + 1)
+        .map((row) => {
+          const workerId = cleanText(row[employeeIndex]);
+          const fullName = cleanText(row[nameIndex]);
+          const payItem = cleanText(row[payItemIndex]);
+          const amount = parseNumber(row[amountIndex]);
+          if (!workerId || !fullName || !payItem) return null;
+
+          const nameParts = splitFullName(fullName);
+          const payParts = splitPayItem(payItem);
+
+          return {
+            __sourceType: "transactionList",
+            Företagsnamn: "Lerums församling",
+            "Arbtag.id": workerId,
+            "Anst.nr": workerId,
+            Förnamn: nameParts.firstName,
+            Efternamn: nameParts.lastName,
+            Löneart: payParts.code,
+            Beskrivning: payParts.description,
+            Belopp: amount,
+            Konto: accountIndex >= 0 ? cleanText(row[accountIndex]) : "",
+            "Kontodel 1": costCenterIndex >= 0 ? cleanText(row[costCenterIndex]) : "",
+            "Bokföringsdatum": paymentDate,
+            Typ: typeIndex >= 0 ? cleanText(row[typeIndex]) : ""
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function findTransactionPaymentDate(matrix) {
+      for (const row of matrix.slice(0, 8)) {
+        for (const cell of row) {
+          const text = cleanText(cell);
+          const match = text.match(/Utbetalningsdatum\s+(\d{4}-\d{2}-\d{2}|\d{8})/i);
+          if (match) return match[1];
+        }
+      }
+      return "";
+    }
+
+    function splitPayItem(value) {
+      const text = cleanText(value);
+      const match = text.match(/^(.+?)\s+-\s+(.+)$/);
+      if (!match) return { code: text, description: text };
+      return {
+        code: match[1].trim(),
+        description: match[2].trim()
+      };
+    }
+
+    function splitFullName(value) {
+      const parts = cleanText(value).split(/\s+/).filter(Boolean);
+      if (parts.length <= 1) return { firstName: parts[0] || "", lastName: "" };
+      return {
+        firstName: parts.slice(0, -1).join(" "),
+        lastName: parts[parts.length - 1]
+      };
     }
 
     function validateColumns(firstRow) {
@@ -299,7 +388,7 @@ const APP_INFO = {
       const hasBookingDate = bookingDates.length > 0;
       const hasAccount = rows.some((row) => row.account);
       const hasScope = rows.some((row) => row.scope);
-      const sourceType = getSourceType(hasBookingDate, hasAccount, hasScope);
+      const sourceType = getSourceType(hasBookingDate, hasAccount, hasScope, first.original && first.original.__sourceType);
       return {
         company: first.company || first.companyCode || "-",
         reportDate: reportDate || "-",
@@ -308,7 +397,18 @@ const APP_INFO = {
       };
     }
 
-    function getSourceType(hasBookingDate, hasAccount, hasScope) {
+    function getSourceType(hasBookingDate, hasAccount, hasScope, explicitSourceType = "") {
+      if (explicitSourceType === "transactionList") {
+        return {
+          sourceKey: "transactionList",
+          sourceLabel: "Transaktionslista",
+          sourceShortLabel: "Trans.lista",
+          sourceTone: "normal",
+          dateLabel: "Utbetalningsdatum",
+          sourceDescription: "Transaktionslista från Rapporter & Dokument. Visar lönearter, skatt och nettolön när löneservice har börjat arbeta med lönerna."
+        };
+      }
+
       if (hasBookingDate && hasAccount) {
         return {
           sourceKey: "accounting",
@@ -387,6 +487,7 @@ const APP_INFO = {
       const fragment = document.createDocumentFragment();
       for (const employee of employees) {
         const visibleRows = getReportRows(employee);
+        const listTotal = getEmployeeListTotal(visibleRows);
         const button = document.createElement("button");
         button.type = "button";
         button.className = `employee-button${employee.key === state.selectedKey ? " active" : ""}`;
@@ -401,7 +502,7 @@ const APP_INFO = {
             <span class="employee-name">${escapeHtml(employee.name)}</span>
             <span class="employee-meta">Anst.nr ${escapeHtml(employee.employeeId || "-")} · ${visibleRows.length}/${employee.rows.length} rader</span>
           </span>
-          <span class="employee-total">${formatCurrency(sum(visibleRows, "amount"))}</span>
+          <span class="employee-total" title="${escapeHtml(listTotal.label)}">${formatCurrency(listTotal.amount)}</span>
         `;
         fragment.appendChild(button);
       }
@@ -466,7 +567,7 @@ const APP_INFO = {
       const totalRows = employees.reduce((count, employee) => count + employee.rows.length, 0);
 
       els.main.innerHTML = `
-        ${renderPrintHeader("Löneunderlagslista")}
+        ${renderPrintHeader(state.metadata ? state.metadata.sourceLabel : "Löneunderlagslista")}
         ${renderSourceNotice()}
         ${renderReportToolbar(
           "Alla anställda",
@@ -477,10 +578,10 @@ const APP_INFO = {
     }
 
     function renderPrintHeader(title) {
-      const dateMeta = state.metadata && state.metadata.sourceKey === "accounting"
+      const dateMeta = state.metadata && ["accounting", "transactionList"].includes(state.metadata.sourceKey)
         ? `<div>${escapeHtml(state.metadata.dateLabel)}: ${escapeHtml(state.metadata.reportDate)}</div>`
         : "";
-      const periodMeta = !state.metadata || state.metadata.sourceKey !== "accounting"
+      const periodMeta = !state.metadata || !["accounting", "transactionList"].includes(state.metadata.sourceKey)
         ? `<div>Period: ${escapeHtml(state.metadata ? state.metadata.period : "-")}</div>`
         : "";
       return `
@@ -508,10 +609,10 @@ const APP_INFO = {
           </div>
         `;
       }
-      const dateText = state.metadata.sourceKey === "accounting"
+      const dateText = ["accounting", "transactionList"].includes(state.metadata.sourceKey)
         ? `${state.metadata.dateLabel}: ${state.metadata.reportDate}`
         : "Bokföringsdatum saknas";
-      const periodText = state.metadata.sourceKey === "accounting"
+      const periodText = ["accounting", "transactionList"].includes(state.metadata.sourceKey)
         ? ""
         : `Period: <strong>${escapeHtml(state.metadata.period)}</strong>.`;
       return `
@@ -542,6 +643,7 @@ const APP_INFO = {
       const visibleRows = getReportRows(employee);
       const sections = groupRowsBySection(visibleRows);
       const totals = getSummaryTotals(employee, visibleRows);
+      const summaryBoxes = getSummaryBoxes(totals);
 
       return `
         <article class="person-report${isAllReport ? " all-report" : ""}">
@@ -553,10 +655,7 @@ const APP_INFO = {
           </div>
 
           <div class="summary-grid">
-            ${renderSummaryBox("Brutto", totals.pay)}
-            ${renderSummaryBox("Ers./utlägg", totals.reimbursement)}
-            ${renderSummaryBox("Skatt/avdrag", totals.tax)}
-            ${renderSummaryBox("Nettolön", totals.netPay)}
+            ${summaryBoxes.map((box) => renderSummaryBox(box.label, box.amount)).join("")}
           </div>
 
           ${SECTION_ORDER.map((sectionKey) => renderSection(sectionKey, sections[sectionKey] || [])).join("")}
@@ -571,6 +670,35 @@ const APP_INFO = {
           <span class="amount">${formatCurrency(amount)}</span>
         </div>
       `;
+    }
+
+    function getSummaryBoxes(totals) {
+      const sourceKey = state.metadata ? state.metadata.sourceKey : "";
+      if (sourceKey === "payrollList") {
+        return [
+          { label: "Summa poster", amount: totals.visible },
+          { label: "Lön/arvoden", amount: totals.pay },
+          { label: "Ers./utlägg", amount: totals.reimbursement },
+          { label: "Frånvaro/sem.", amount: totals.absence }
+        ];
+      }
+
+      if (sourceKey === "transactionList" || sourceKey === "accounting") {
+        return [
+          { label: "Brutto", amount: totals.gross },
+          { label: "Ers./utlägg", amount: totals.reimbursement },
+          { label: "Skatt/avdrag", amount: totals.tax },
+          { label: "Nettolön", amount: totals.netPay }
+        ];
+      }
+
+      return [
+        { label: "Summa poster", amount: totals.visible },
+        { label: "Brutto", amount: totals.pay },
+        { label: "Ers./utlägg", amount: totals.reimbursement },
+        { label: "Skatt/avdrag", amount: totals.tax },
+        { label: "Nettolön", amount: totals.netPay }
+      ];
     }
 
     function renderSection(sectionKey, rows) {
@@ -630,12 +758,34 @@ const APP_INFO = {
     }
 
     function getSummaryTotals(employee, visibleRows) {
+      const pay = sum(visibleRows.filter((row) => row.category === "pay"), "amount");
+      const absence = sum(visibleRows.filter((row) => row.category === "absence"), "amount");
+      const reimbursement = sum(visibleRows.filter((row) => row.category === "reimbursement"), "amount");
+      const other = sum(visibleRows.filter((row) => row.category === "other"), "amount");
+      const tax = sum(visibleRows.filter((row) => row.category === "tax"), "amount");
+      const netPay = Math.abs(sum(visibleRows.filter((row) => row.category === "net"), "amount"));
       return {
-        pay: sum(visibleRows.filter((row) => row.category === "pay"), "amount"),
-        reimbursement: sum(visibleRows.filter((row) => row.category === "reimbursement"), "amount"),
-        tax: sum(visibleRows.filter((row) => row.category === "tax"), "amount"),
-        netPay: Math.abs(sum(visibleRows.filter((row) => row.category === "net"), "amount"))
+        visible: sum(visibleRows, "amount"),
+        gross: pay + absence + reimbursement + other,
+        pay,
+        absence,
+        reimbursement,
+        other,
+        tax,
+        netPay
       };
+    }
+
+    function getEmployeeListTotal(visibleRows) {
+      const totals = getSummaryTotals(null, visibleRows);
+      const sourceKey = state.metadata ? state.metadata.sourceKey : "";
+      if ((sourceKey === "transactionList" || sourceKey === "accounting") && totals.netPay) {
+        return { label: "Nettolön/utbetalt", amount: totals.netPay };
+      }
+      if (sourceKey === "payrollList") {
+        return { label: "Summa synliga lönepåverkande poster", amount: totals.visible };
+      }
+      return { label: "Summa synliga poster", amount: totals.visible };
     }
 
     function getFilteredEmployees() {
