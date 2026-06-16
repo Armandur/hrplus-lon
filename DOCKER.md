@@ -4,49 +4,58 @@ Appen är helt statisk. Containern bygger `dist/` från källan (`index.html` vi
 `build.mjs`) och serverar den med nginx. Samma säkerhetsheaders som
 `dist/_headers` sätts i `nginx.conf`, plus SPA-fallback.
 
-## Kör med docker compose
+## Produktion: färdig image från GHCR
+
+GitHub Actions (`.github/workflows/docker.yml`) bygger och pushar
+`ghcr.io/armandur/hrplus-lon` vid push till `main` och vid taggar.
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-Appen nås sedan på `http://<host>:8848` (t.ex. http://ubuntu-ai:8848).
-Peka en reverse proxy mot den porten.
+Nås på `http://<host>:8848` (t.ex. http://ubuntu-ai:8848). Peka reverse proxy dit.
 
-Stoppa:
+> Första gången: gör GitHub Packages-paketet **publikt** (Package settings ->
+> Change visibility), annars krävs `docker login ghcr.io` för att kunna pulla.
+
+## Lokalt bygge (utan GHCR)
+
+`docker-compose.dev.yml` bygger imagen lokalt. Skicka in git-info så att
+versionsrutan i appen stämmer:
 
 ```bash
-docker compose down
+REPO=$(git config --get remote.origin.url) \
+BRANCH=$(git rev-parse --abbrev-ref HEAD) \
+COMMIT_FULL=$(git rev-parse HEAD) \
+BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+docker compose -f docker-compose.dev.yml up -d --build
 ```
+
+Stoppa: `docker compose -f docker-compose.dev.yml down`.
+
+## Versionsinfo i appen
+
+Vid bygget skapar `build.mjs` `dist/version.json` med repo, branch, commit och
+byggtid. Appen hämtar den och visar den under **Hjälp -> Om programmet**, så det
+går att se exakt vilken image som körs. Värdena kommer från build-args (Docker/CI)
+eller lokal git. Saknas filen visas inget (t.ex. om man öppnar `index.html`
+direkt som fil).
 
 ## Byt port
 
-Ändra host-porten i `docker-compose.yml`:
+Ändra host-porten i `docker-compose.yml` / `docker-compose.dev.yml`:
 
 ```yaml
 ports:
   - "9000:80"   # <host>:<container>
 ```
 
-## Bygg/kör utan compose
-
-```bash
-docker build -t hrplus-lon:local .
-docker run -d --name hrplus-lon -p 8848:80 hrplus-lon:local
-```
-
-## Uppdatera efter kodändring
-
-Containern bygger `dist/` själv vid image-bygget, så det räcker att bygga om:
-
-```bash
-docker compose up -d --build
-```
-
 ## Filer
 
-- `Dockerfile` - multi-stage: Node bygger `dist/`, nginx serverar.
-- `nginx.conf` - root, säkerhetsheaders, SPA-fallback. Kopieras till
-  `/etc/nginx/conf.d/default.conf`.
+- `Dockerfile` - multi-stage: Node bygger `dist/` (med bygginfo), nginx serverar.
+- `nginx.conf` - root, säkerhetsheaders, SPA-fallback.
 - `.dockerignore` - håller byggkontexten liten.
-- `docker-compose.yml` - single-container på port 8848.
+- `docker-compose.yml` - produktion, image från GHCR.
+- `docker-compose.dev.yml` - lokalt bygge.
+- `.github/workflows/docker.yml` - bygger/publicerar imagen.

@@ -1,9 +1,9 @@
-# Single-container-drift. Bygger image lokalt från Dockerfile och serverar
-# appen statiskt med nginx. Justera host-porten vid behov.
+# Single-container-drift mot färdig image från GHCR (byggs av GitHub Actions).
+# Gör paketet publikt i GitHub Packages första gången, annars krävs inloggning.
+# För lokalt bygge utan GHCR, använd docker-compose.dev.yml.
 services:
   app:
-    build: .
-    image: hrplus-lon:local
+    image: ghcr.io/armandur/hrplus-lon:latest
     container_name: hrplus-lon
     ports:
       - "8848:80"
