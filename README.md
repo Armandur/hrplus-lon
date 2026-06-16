@@ -16,7 +16,9 @@ Det stödjer export från:
 
 ## Dataskydd
 
-Importerade Excel-filer behandlas lokalt i användarens webbläsare. Verktyget laddar inte upp lönefiler eller löneuppgifter till någon server.
+Importerade Excel-filer behandlas enbart lokalt i din webbläsare. Ingen information från den valda filen skickas vidare till någon server.
+
+Vid besök på sidan hämtas endast själva app-filerna från vår webb (index, css, javascript och bibliotek). Inget filinnehåll från din dator skickas med.
 
 Källkoden är publik så att andra kan granska hur verktyget fungerar.
 
