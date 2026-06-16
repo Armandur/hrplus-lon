@@ -75,13 +75,18 @@ $html = $html -replace "(\r?\n){3,}", "`r`n`r`n"
 [System.IO.File]::WriteAllText((Join-Path $distFull "index.html"), $html, $utf8)
 Copy-Item -LiteralPath $sourceVendor -Destination (Join-Path $distFull "vendor\xlsx.full.min.js") -Force
 
-$headers = @"
+ $headers = @"
 /*
-  Cache-Control: public, max-age=0, must-revalidate
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
 "@
 
 [System.IO.File]::WriteAllText((Join-Path $distFull "_headers"), $headers, $utf8)
