@@ -10,6 +10,7 @@ ARG BUILT_AT=
 ENV REPO=$REPO BRANCH=$BRANCH COMMIT=$COMMIT COMMIT_FULL=$COMMIT_FULL BUILT_AT=$BUILT_AT
 COPY index.html source-notice.html build.mjs ./
 COPY vendor ./vendor
+COPY src ./src
 RUN node build.mjs
 
 FROM nginx:alpine

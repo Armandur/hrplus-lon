@@ -2,7 +2,7 @@
 // Plattformsoberoende bygge. Motsvarar build.ps1 men kräver bara Node.
 // Användning: node build.mjs [utdatakatalog]   (standard: dist)
 
-import { readFileSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
@@ -24,7 +24,7 @@ if (!existsSync(sourceVendor)) throw new Error("Saknar vendor/xlsx.full.min.js."
 
 if (existsSync(dist)) rmSync(dist, { recursive: true, force: true });
 mkdirSync(join(dist, "vendor"), { recursive: true });
-mkdirSync(join(dist, "assets"), { recursive: true });
+mkdirSync(join(dist, "assets", "logic"), { recursive: true });
 
 const sourceNotice = existsSync(sourceNoticeFile)
   ? readFileSync(sourceNoticeFile, "utf8")
@@ -32,22 +32,19 @@ const sourceNotice = existsSync(sourceNoticeFile)
 
 let html = readFileSync(sourceIndex, "utf8");
 html = html.replace(/^<!doctype html>/i, (m) => `${m}\n${sourceNotice}`);
-
-const styleMatch = html.match(/<style>\s*([\s\S]*?)\s*<\/style>/);
-if (styleMatch) {
-  writeFileSync(join(dist, "assets", "app.css"), styleMatch[1].trim(), "utf8");
-  html = html.replace(styleMatch[0], '<link rel="stylesheet" href="assets/app.css">');
-}
-
-const scriptMatch = html.match(/<script>\s*(const APP_INFO[\s\S]*?)\s*<\/script>/);
-if (scriptMatch) {
-  writeFileSync(join(dist, "assets", "app.js"), scriptMatch[1].trim(), "utf8");
-  html = html.replace(scriptMatch[0], '<script src="assets/app.js"></script>');
-}
-
-html = html.replace(/(\r?\n){3,}/g, "\n\n");
-
 writeFileSync(join(dist, "index.html"), html, "utf8");
+
+// Kopiera assets
+copyFileSync(join(root, "src", "styles.css"), join(dist, "assets", "app.css"));
+copyFileSync(join(root, "src", "app.js"), join(dist, "assets", "app.js"));
+
+// Kopiera logikmoduler
+const logicFiles = readdirSync(join(root, "src", "logic"));
+for (const file of logicFiles) {
+  copyFileSync(join(root, "src", "logic", file), join(dist, "assets", "logic", file));
+}
+
+// Kopiera vendor
 copyFileSync(sourceVendor, join(dist, "vendor", "xlsx.full.min.js"));
 
 const headers = `/*
