@@ -871,26 +871,35 @@ async function loadBuildInfo() {
     if (!res.ok) return;
     const v = await res.json();
     els.buildInfo.textContent = "";
-    const add = (label, value, href) => {
-      if (!value) return;
-      if (els.buildInfo.childNodes.length) els.buildInfo.append(" · ");
-      els.buildInfo.append(`${label}: `);
+    const rows = [
+      ["Repo", v.repo, /^https?:/.test(v.repo || "") ? v.repo : ""],
+      ["Branch", v.branch, ""],
+      ["Commit", v.commit, v.commitUrl],
+      ["Byggd", v.builtAt, ""]
+    ];
+    let any = false;
+    for (const [label, value, href] of rows) {
+      if (!value) continue;
+      any = true;
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
       if (href) {
         const a = document.createElement("a");
         a.href = href;
         a.target = "_blank";
         a.rel = "noreferrer";
         a.textContent = value;
-        els.buildInfo.append(a);
+        dd.append(a);
       } else {
-        els.buildInfo.append(value);
+        dd.textContent = value;
       }
-    };
-    const repoHref = /^https?:/.test(v.repo || "") ? v.repo : "";
-    add("Repo", v.repo, repoHref);
-    add("Branch", v.branch);
-    add("Commit", v.commit, v.commitUrl);
-    add("Byggd", v.builtAt);
+      els.buildInfo.append(dt, dd);
+    }
+    if (any) {
+      const section = document.getElementById("buildSection");
+      if (section) section.hidden = false;
+    }
   } catch (error) {
     console.debug("Ingen version.json att visa", error);
   }
