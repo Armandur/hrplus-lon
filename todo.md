@@ -7,10 +7,10 @@
   kan köras lokalt/self-hostas utan Cloudflare. Lägg till `Dockerfile` och
   `docker-compose.yml`, och dokumentera i `DOCKER.md`.
 
-- [ ] **Kör igång forken på en vald port på VM:en för demo åt kollega.** Starta
-  appen (containern ovan eller en statisk server) på en bevisat ledig port på
-  VM:en så att en reverse proxy kan pekas mot den. Notera vald port här när den
-  är bestämd.
+- [~] **Kör igång forken på en vald port på VM:en för demo åt kollega.** Kör just
+  nu på **port 8848** (http://ubuntu-ai:8848) via `python -m http.server` från
+  `dist/` - peka reverse proxy dit. Bör ersättas av containern nedan för en mer
+  varaktig drift.
 
 ## Klart
 
