@@ -1,12 +1,8 @@
 # Att göra
 
-## Planerat
-
-- [ ] **Manuellt:** gör GitHub Packages-paketet `hrplus-lon` publikt efter första
-  CI-bygget, annars krävs `docker login ghcr.io` för att pulla imagen.
-
 ## Klart
 
+- [x] **GHCR-paketet publikt** och demon växlad till `ghcr.io/armandur/hrplus-lon:latest`.
 - [x] **CI till GHCR.** GitHub Actions bygger/pushar `ghcr.io/armandur/hrplus-lon`
   (latest, sha, branch, semver). `docker-compose.yml` pekar på GHCR-imagen,
   `docker-compose.dev.yml` bygger lokalt.
