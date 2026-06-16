@@ -126,6 +126,7 @@ const APP_INFO = {
       closeHelpButton: document.getElementById("closeHelpButton"),
       aboutText: document.getElementById("aboutText"),
       contactText: document.getElementById("contactText"),
+      buildInfo: document.getElementById("buildInfo"),
     };
 
     els.fileInput.addEventListener("change", handleFileChange);
@@ -1021,6 +1022,40 @@ const APP_INFO = {
     function initializeStaticText() {
       els.aboutText.textContent = `${APP_INFO.name} version ${APP_INFO.version}. Programmet är framtaget av ${APP_INFO.author}.`;
       els.contactText.textContent = APP_INFO.contact;
+      loadBuildInfo();
+    }
+
+    // Visar repo/branch/commit för den körande imagen (version.json bakas in vid
+    // bygget). Saknas filen, t.ex. vid lokal fil utan bygginfo, visas inget.
+    async function loadBuildInfo() {
+      try {
+        const res = await fetch("version.json", { cache: "no-store" });
+        if (!res.ok) return;
+        const v = await res.json();
+        els.buildInfo.textContent = "";
+        const add = (label, value, href) => {
+          if (!value) return;
+          if (els.buildInfo.childNodes.length) els.buildInfo.append(" · ");
+          els.buildInfo.append(`${label}: `);
+          if (href) {
+            const a = document.createElement("a");
+            a.href = href;
+            a.target = "_blank";
+            a.rel = "noreferrer";
+            a.textContent = value;
+            els.buildInfo.append(a);
+          } else {
+            els.buildInfo.append(value);
+          }
+        };
+        const repoHref = /^https?:/.test(v.repo || "") ? v.repo : "";
+        add("Repo", v.repo, repoHref);
+        add("Branch", v.branch);
+        add("Commit", v.commit, v.commitUrl);
+        add("Byggd", v.builtAt);
+      } catch (error) {
+        console.debug("Ingen version.json att visa", error);
+      }
     }
 
     function openHelp() {

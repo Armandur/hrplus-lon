@@ -5,6 +5,7 @@
 import { readFileSync, writeFileSync, rmSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const outDir = process.argv[2] || "dist";
@@ -56,6 +57,30 @@ const headers = `/*
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'
 `;
 writeFileSync(join(dist, "_headers"), headers, "utf8");
+
+// version.json: repo/branch/commit för den körda imagen. Tas från env (sätts av
+// Docker/CI) eller faller tillbaka till lokal git. Saknas allt blir fälten tomma.
+function git(cmd) {
+  try {
+    return execSync(`git ${cmd}`, { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return "";
+  }
+}
+function normalizeRepo(url) {
+  if (!url) return "";
+  const ssh = url.trim().match(/git@github\.com:(.+?)(?:\.git)?$/);
+  if (ssh) return `https://github.com/${ssh[1]}`;
+  return url.trim().replace(/\.git$/, "");
+}
+const repo = normalizeRepo(process.env.REPO || git("config --get remote.origin.url"));
+const branch = process.env.BRANCH || git("rev-parse --abbrev-ref HEAD");
+const commitFull = process.env.COMMIT_FULL || git("rev-parse HEAD");
+const commit = process.env.COMMIT || (commitFull ? commitFull.slice(0, 7) : git("rev-parse --short HEAD"));
+const builtAt = process.env.BUILT_AT || new Date().toISOString().replace(/\.\d+Z$/, "Z");
+const commitUrl = repo && (commitFull || commit) ? `${repo}/commit/${commitFull || commit}` : "";
+writeFileSync(join(dist, "version.json"),
+  JSON.stringify({ repo, branch, commit, commitFull, commitUrl, builtAt }, null, 2) + "\n", "utf8");
 
 console.log(`Skapade ${dist}`);
 console.log(`Publicera den här mappen i Cloudflare: ${outDir}`);

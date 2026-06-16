@@ -22,3 +22,6 @@ tmp/
 # Keep dist committed for Cloudflare Pages.
 !dist/
 !dist/**
+
+# Bygginfo genereras vid varje bygge, checkas inte in.
+dist/version.json
