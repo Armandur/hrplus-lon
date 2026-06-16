@@ -186,3 +186,38 @@ enligt etapp 2.
 5. **Typer:** JSDoc + `tsc --checkJs` i CI.
 
 Varje etapp är självständigt mergebar och lämnar appen i ett fungerande skick.
+
+## Möjlig ny funktionalitet
+
+Idéer för vidareutveckling, sorterade efter nytta. Genomgående krav: allt ska
+stanna i webbläsaren (inget lämnar klienten), och allt som sparas lokalt ska
+data-minimeras och vara enkelt att rensa.
+
+### Hög nytta (granskningsnära)
+
+1. **Jämför två filer/perioder (diff).** Ställ en månad mot föregående, eller
+   löneunderlagslista (preliminär) mot bokföringsposter (klar), och lyft fram
+   skillnader per anställd/löneart. Det granskaren främst letar efter: oväntade
+   förändringar. Störst värde, större jobb.
+2. **Avvikelseflaggor / granskningsvy.** Automatiska varningar för misstänkta
+   rader: negativ nettolön, ovanligt stora belopp, saknad skatterad, dubbletter,
+   anställd med enbart tekniska rader. En vy som samlar "det här bör du titta på".
+3. **Aggregerad summeringsvy.** Totaler för hela filen (brutto, skatt, netto,
+   arbetsgivaravgift, antal anställda) samt uppdelning per konto/kostnadsställe -
+   för avstämning mot bokföringen.
+
+### Stödjer arbetsflödet
+
+4. **Markera "granskad" + anteckning per anställd** (sparas lokalt) för att beta
+   av många personer. Kräver data-minimering och en tydlig rensa-funktion.
+5. **Spara UI-inställningar** (merge/tekniska/sortering) mellan sessioner via
+   localStorage - liten, säker UX-vinst (endast preferenser, inga lönedata).
+6. **Strukturerade filter** (kostnadsställe/konto/avtalskategori) utöver fritextsök.
+
+### Småfix
+
+7. **Drag-and-drop-import och tangentbordsnavigering** (j/k mellan anställda).
+   *(Påbörjad - se todo.md.)*
+
+**Föreslagen ordning:** #2 (avvikelseflaggor) först (bäst nytta/insats), därefter
+#1 (perioddiff) som nästa större steg. #5 är en gratis quick win.

@@ -2,6 +2,10 @@
 
 ## Planerat
 
+- [ ] **Drag-and-drop-import och tangentbordsnavigering** (#7 i
+  `docs/FORBATTRINGSFORSLAG.md`). Släpp en xlsx på sidan för att importera, och
+  navigera mellan anställda med j/k. (Påbörjad.)
+
 - [ ] **Löpande förbättringsdokumentation.** Håll `docs/FORBATTRINGSFORSLAG.md`
   (och ev. fler dok) uppdaterad med våra förbättringar och förslag allteftersom,
   så att de kan sammanställas till en kommande PR mot org-repot (daseus/hrplus-lon).

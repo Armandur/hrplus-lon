@@ -101,10 +101,51 @@ els.helpDialog.addEventListener("click", (event) => {
   if (event.target === els.helpDialog) closeHelp();
 });
 
+// Drag-and-drop: släpp en xlsx var som helst på sidan för att importera.
+["dragenter", "dragover"].forEach((type) => {
+  document.addEventListener(type, (event) => {
+    if (event.dataTransfer && Array.from(event.dataTransfer.types).includes("Files")) {
+      event.preventDefault();
+      document.body.classList.add("dragging");
+    }
+  });
+});
+["dragleave", "dragend"].forEach((type) => {
+  document.addEventListener(type, (event) => {
+    if (!event.relatedTarget) document.body.classList.remove("dragging");
+  });
+});
+document.addEventListener("drop", (event) => {
+  const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+  if (!file) return;
+  event.preventDefault();
+  document.body.classList.remove("dragging");
+  importFile(file);
+});
+
+// Tangentbordsnavigering: j/k bläddrar mellan anställda.
+document.addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const tag = (event.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "select" || tag === "textarea" || event.target.isContentEditable) return;
+  if (!state.employees.length) return;
+  if (event.key === "j") {
+    event.preventDefault();
+    selectRelativeEmployee(1);
+  } else if (event.key === "k") {
+    event.preventDefault();
+    selectRelativeEmployee(-1);
+  }
+});
+
 initializeStaticText();
 
-async function handleFileChange(event) {
+function handleFileChange(event) {
   const file = event.target.files && event.target.files[0];
+  if (file) importFile(file);
+}
+
+async function importFile(file) {
   if (!file) return;
 
   if (!/\.(xlsx|xls)$/i.test(file.name)) {

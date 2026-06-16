@@ -400,6 +400,11 @@ select:focus-visible {
   min-width: 0;
 }
 
+body.dragging .app {
+  outline: 3px dashed var(--accent);
+  outline-offset: -3px;
+}
+
 .employee-name {
   font-weight: 700;
   overflow-wrap: anywhere;
