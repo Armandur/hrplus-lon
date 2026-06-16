@@ -1,33 +1,28 @@
 # Löneunderlagsgranskare HR+
 
-En statisk webbapp för att granska Excel-exporter från Hr+ lokalt i webbläsaren.
+Ett webbaserat granskningsverktyg för Excel-exporter från Hr+.
+
+Publicerad version: <https://hrlon.lerumsforsamling.se>
+
+## Kort om verktyget
+
+Verktyget gör det enklare att granska löneunderlag per anställd i stället för att arbeta manuellt med filter i Excel.
+
+Det stödjer export från:
+
+- `Ekonomirutin → Bokföringsposter → Mer → Export → Kalkylprogram`
+- `Rapporter & Dokument → Transaktionslista → Spara som Excel`
+- `Ekonomirutin → Löneunderlagslista → Mer → Export → Kalkylprogram`
 
 ## Dataskydd
 
-Importerade Excel-filer behandlas lokalt i användarens webbläsare. Appen laddar inte upp lönefiler till någon server.
+Importerade Excel-filer behandlas lokalt i användarens webbläsare. Verktyget laddar inte upp lönefiler eller löneuppgifter till någon server.
 
-## Publicering med Cloudflare Workers
+Källkoden är publik så att andra kan granska hur verktyget fungerar.
 
-Projektet innehåller `wrangler.jsonc`, så Cloudflare kan publicera `dist` som statiska assets via Workers.
+- [Dataskydd och teknisk säkerhet](docs/security.md)
+- [Deployment och cache-beteende](docs/deployment.md)
 
-Rekommenderad Cloudflare-inställning under Workers & Pages:
-
-- Build command: `exit 0`
-- Deploy command: `npx wrangler deploy`
-- Path/root directory: lämna tomt eller använd projektroten
-
-`wrangler.jsonc` pekar själv ut `./dist` som publiceringsmapp.
-
-## Uppdatera publiceringsversionen
-
-Kör detta lokalt efter ändringar i `index.html` eller `source-notice.html`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build.ps1
-```
-
-Commita sedan både källfilerna och den uppdaterade `dist`-mappen.
-
-## Filer som inte ska in i Git
+## Viktigt
 
 Excel-exporter, PDF:er och andra lönefiler ska inte läggas i repot. `.gitignore` blockerar vanliga filtyper som `.xlsx`, `.xls`, `.csv` och `.pdf`.

@@ -27,6 +27,17 @@ if (-not (Test-Path -LiteralPath $sourceVendor)) {
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
+function Get-ShortHash([string]$Text) {
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = $utf8.GetBytes($Text)
+    $hash = $sha.ComputeHash($bytes)
+    return (($hash | ForEach-Object { $_.ToString("x2") }) -join "").Substring(0, 12)
+  } finally {
+    $sha.Dispose()
+  }
+}
+
 if (Test-Path -LiteralPath $distFull) {
   Remove-Item -LiteralPath $distFull -Recurse -Force
 }
@@ -46,15 +57,17 @@ $html = $html -replace "(?i)^<!doctype html>", "<!doctype html>`r`n$sourceNotice
 $styleMatch = [regex]::Match($html, "(?s)<style>\s*(?<css>.*?)\s*</style>")
 if ($styleMatch.Success) {
   $css = $styleMatch.Groups["css"].Value.Trim()
+  $cssVersion = Get-ShortHash $css
   [System.IO.File]::WriteAllText((Join-Path $distFull "assets\app.css"), $css, $utf8)
-  $html = $html.Remove($styleMatch.Index, $styleMatch.Length).Insert($styleMatch.Index, '<link rel="stylesheet" href="assets/app.css">')
+  $html = $html.Remove($styleMatch.Index, $styleMatch.Length).Insert($styleMatch.Index, "<link rel=`"stylesheet`" href=`"assets/app.css?v=$cssVersion`">")
 }
 
 $scriptMatch = [regex]::Match($html, "(?s)<script>\s*(?<js>const APP_INFO[\s\S]*?)\s*</script>")
 if ($scriptMatch.Success) {
   $js = $scriptMatch.Groups["js"].Value.Trim()
+  $jsVersion = Get-ShortHash $js
   [System.IO.File]::WriteAllText((Join-Path $distFull "assets\app.js"), $js, $utf8)
-  $html = $html.Remove($scriptMatch.Index, $scriptMatch.Length).Insert($scriptMatch.Index, '<script src="assets/app.js"></script>')
+  $html = $html.Remove($scriptMatch.Index, $scriptMatch.Length).Insert($scriptMatch.Index, "<script src=`"assets/app.js?v=$jsVersion`"></script>")
 }
 
 $html = $html -replace "(\r?\n){3,}", "`r`n`r`n"
@@ -64,6 +77,7 @@ Copy-Item -LiteralPath $sourceVendor -Destination (Join-Path $distFull "vendor\x
 
 $headers = @"
 /*
+  Cache-Control: public, max-age=0, must-revalidate
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(), microphone=(), geolocation=()
