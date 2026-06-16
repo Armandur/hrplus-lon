@@ -136,7 +136,7 @@ async function handleFileChange(event) {
 
     validateColumns(rawRows[0]);
     loadRows(rawRows);
-    setStatus(`Importerade ${formatInteger(state.rows.length)} rader från ${file.name}.`);
+    setStatus(buildImportSummary(file.name, rawRows.length), state.metadata && state.metadata.sourceKey === "unknown");
   } catch (error) {
     resetData();
     setStatus(error.message || "Kunde inte läsa filen.", true);
@@ -197,6 +197,20 @@ function loadRows(rawRows) {
   enableControls(true);
   updateMetrics();
   render();
+}
+
+function buildImportSummary(fileName, rawRowCount) {
+  const meta = state.metadata;
+  const typeText = meta && meta.sourceLabel ? ` som ${meta.sourceLabel}` : "";
+  const skipped = rawRowCount - state.rows.length;
+  let message = `Importerade ${formatInteger(state.rows.length)} rader (${formatInteger(state.employees.length)} anställda)${typeText} från ${fileName}.`;
+  if (skipped > 0) {
+    message += ` ${formatInteger(skipped)} rader utan namn/benämning hoppades över.`;
+  }
+  if (meta && meta.sourceKey === "unknown") {
+    message += " Obs: exporttypen kunde inte identifieras säkert - kontrollera att filen kommer från Hr+.";
+  }
+  return message;
 }
 
 function normalizeRow(raw) {
