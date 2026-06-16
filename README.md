@@ -6,6 +6,16 @@ En statisk webbapp för att granska Excel-exporter från Hr+ lokalt i webbläsar
 
 Importerade Excel-filer behandlas lokalt i användarens webbläsare. Appen laddar inte upp lönefiler till någon server.
 
+## Self-hosting med Docker
+
+Appen kan köras i en egen container (nginx) utan Cloudflare:
+
+```bash
+docker compose up -d --build
+```
+
+Nås sedan på `http://<host>:8848`. Se `DOCKER.md` för detaljer.
+
 ## Publicering med Cloudflare Workers
 
 Projektet innehåller `wrangler.jsonc`, så Cloudflare kan publicera `dist` som statiska assets via Workers.
