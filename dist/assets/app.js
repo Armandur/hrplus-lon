@@ -219,6 +219,7 @@ const APP_INFO = {
       const costCenterIndex = header.findIndex((value) => value === "Avvikande kostnadsställe");
       const amountIndex = header.findIndex((value) => value === "Belopp");
       const paymentDate = findTransactionPaymentDate(matrix);
+      const company = findTransactionCompany(matrix, headerIndex);
 
       if (employeeIndex === -1 || nameIndex === -1 || payItemIndex === -1 || amountIndex === -1) return [];
 
@@ -235,7 +236,7 @@ const APP_INFO = {
 
           return {
             __sourceType: "transactionList",
-            Företagsnamn: "Lerums församling",
+            Företagsnamn: company,
             "Arbtag.id": workerId,
             "Anst.nr": workerId,
             Förnamn: nameParts.firstName,
@@ -258,6 +259,18 @@ const APP_INFO = {
           const text = cleanText(cell);
           const match = text.match(/Utbetalningsdatum\s+(\d{4}-\d{2}-\d{2}|\d{8})/i);
           if (match) return match[1];
+        }
+      }
+      return "";
+    }
+
+    function findTransactionCompany(matrix, headerIndex) {
+      const metadataRows = matrix.slice(0, headerIndex >= 0 ? headerIndex : 8);
+      for (const row of metadataRows) {
+        for (const cell of row) {
+          const text = cleanText(cell);
+          const match = text.match(/F[öo]retag\s*[:\-]?\s*(.+)/i);
+          if (match && match[1]) return cleanText(match[1]);
         }
       }
       return "";
