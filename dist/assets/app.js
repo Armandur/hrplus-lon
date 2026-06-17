@@ -11,20 +11,20 @@ const APP_INFO = {
       company: ["Företagsnamn"],
       unit: ["Enhet"],
       workerId: ["Arbtag.id"],
-      employeeId: ["Anst.nr"],
-      firstName: ["Förnamn"],
+      employeeId: ["Anst.nr", "Anst.id"],
+      firstName: ["Förnamn", "Namn"],
       lastName: ["Efternamn"],
       agreement: ["Avt/kat", "Avtal"],
       payCode: ["Löneart"],
       description: ["Beskrivning", "Benämning"],
       unitPrice: ["Apris"],
-      hours: ["Timmar", "Ant/Tim"],
-      calendarDays: ["Kal.dgr"],
-      workDays: ["Arb.dgr"],
+      hours: ["Timmar", "Ant/Tim", "Tim/Antal"],
+      calendarDays: ["Kal.dgr", "Kal.dagar"],
+      workDays: ["Arb.dgr", "Arb.dagar"],
       amount: ["Belopp"],
       fromDate: ["From-datum", "Fr.o.m."],
       toDate: ["Tom-datum", "T.o.m."],
-      scope: ["Omfattning %"],
+      scope: ["Omfattning %", "Omf."],
       account: ["Konto"],
       costPart1: ["Kontodel 1"],
       costPart2: ["Kontodel 2"],
@@ -120,6 +120,10 @@ const APP_INFO = {
       closeHelpButton: document.getElementById("closeHelpButton"),
       aboutText: document.getElementById("aboutText"),
       contactText: document.getElementById("contactText"),
+      warningDialog: document.getElementById("warningDialog"),
+      warningText: document.getElementById("warningText"),
+      warningTitle: document.getElementById("warningTitle"),
+      closeWarningButton: document.getElementById("closeWarningButton")
     };
 
     els.fileInput.addEventListener("change", handleFileChange);
@@ -160,6 +164,10 @@ const APP_INFO = {
     els.helpDialog.addEventListener("click", (event) => {
       if (event.target === els.helpDialog) closeHelp();
     });
+    els.closeWarningButton.addEventListener("click", closeWarning);
+    els.warningDialog.addEventListener("click", (event) => {
+      if (event.target === els.warningDialog) closeWarning();
+    });
 
     initializeStaticText();
 
@@ -181,23 +189,72 @@ const APP_INFO = {
         if (!firstSheetName) throw new Error("Filen innehåller inget kalkylblad.");
 
         const sheet = workbook.Sheets[firstSheetName];
-        const rawRows = extractRowsFromSheet(sheet);
-        if (!rawRows.length) throw new Error("Kalkylbladet innehåller inga datarader.");
+        const parseResult = extractRowsFromSheet(sheet);
+        const rawRows = parseResult.rows || [];
+        if (!rawRows.length) {
+          const reason = parseResult.warnings && parseResult.warnings.length
+            ? parseResult.warnings.join("\n")
+            : "Kalkylbladet innehåller inga datarader.";
+          throw new Error(reason);
+        }
 
-        validateColumns(rawRows[0]);
-        loadRows(rawRows);
+        if (parseResult.sourceType === "unknown") {
+          throw new Error("Okänt filformat. Denna fil matchar inget av de stödde Hr+-formaten.\n\nSe hjälpavsnittet för filer som stöds (Underlagstyper).");
+        }
+
+        validateColumns(rawRows[0], parseResult.sourceType || "auto");
+        const importResult = loadRows(rawRows, parseResult.sourceType);
+        const warnings = [
+          ...(parseResult.warnings || []),
+          ...(importResult.warnings || [])
+        ];
+        if (!state.rows.length) {
+          throw new Error("Ingen komplett eller tolkbar post kunde hittas i filen.");
+        }
+        if (warnings.length) {
+          showWarning(`OBS: filformatet kan ha ändrats.\n\n${warnings.join("\n")}\n\nResultatet kan vara ofullständigt.`, "Information");
+        }
         setStatus(`Importerade ${formatInteger(state.rows.length)} rader från ${file.name}.`);
       } catch (error) {
         resetData();
-        setStatus(error.message || "Kunde inte läsa filen.", true);
+        const message = error.message || "Kunde inte läsa filen.";
+        setStatus(message, true);
+        showWarning(message, "Importfel");
       }
     }
 
     function extractRowsFromSheet(sheet) {
       const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
       const transactionRows = parseTransactionList(matrix);
-      if (transactionRows.length) return transactionRows;
-      return XLSX.utils.sheet_to_json(sheet, { defval: "", raw: true });
+      if (transactionRows.rows.length || transactionRows.sourceType === "transactionList") return transactionRows;
+      const payrollDraftRows = parsePayrollDraftRows(matrix);
+      if (payrollDraftRows.rows.length || payrollDraftRows.sourceType.includes("payrollDraft")) return payrollDraftRows;
+
+      const fallbackRows = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: true });
+      const inferredSourceType = inferSourceTypeFromRawRows(fallbackRows);
+      if (inferredSourceType !== "unknown") {
+        fallbackRows.forEach((row) => {
+          row.__sourceType = inferredSourceType;
+        });
+      }
+      return {
+        sourceType: inferredSourceType,
+        rows: fallbackRows,
+        warnings: inferredSourceType === "unknown" ? [
+          "Kunde inte identifiera filen som ett känt Hr+-exportformat (Bokföringsposter, Transaktionslista eller Löneunderlag från I:)."
+        ] : []
+      };
+    }
+
+    function inferSourceTypeFromRawRows(rows) {
+      if (!rows.length) return "unknown";
+      const headers = Object.keys(rows[0] || {}).map((value) => cleanText(value).toLowerCase());
+
+      if (headers.includes("bokföringsdatum")) return "accounting";
+      if (headers.includes("arbetstagare") && headers.includes("namn") && headers.includes("löneart") && headers.includes("belopp")) {
+        return "transactionList";
+      }
+      return "unknown";
     }
 
     function parseTransactionList(matrix) {
@@ -208,7 +265,7 @@ const APP_INFO = {
           && labels.includes("löneart")
           && labels.includes("belopp");
       });
-      if (headerIndex === -1) return [];
+      if (headerIndex === -1) return { sourceType: "", rows: [], warnings: [] };
 
       const header = matrix[headerIndex].map(cleanText);
       const employeeIndex = header.findIndex((value) => value === "Arbetstagare");
@@ -220,9 +277,25 @@ const APP_INFO = {
       const amountIndex = header.findIndex((value) => value === "Belopp");
       const paymentDate = findTransactionPaymentDate(matrix);
 
-      if (employeeIndex === -1 || nameIndex === -1 || payItemIndex === -1 || amountIndex === -1) return [];
+      const requiredColumns = [
+        ["Arbetstagare", employeeIndex],
+        ["Namn", nameIndex],
+        ["Löneart", payItemIndex],
+        ["Belopp", amountIndex]
+      ];
+      const missingRequired = requiredColumns.filter(([, index]) => index === -1).map(([name]) => name);
 
-      return matrix.slice(headerIndex + 1)
+      if (missingRequired.length) {
+        return {
+          sourceType: "transactionList",
+          rows: [],
+          warnings: [
+            `Transaktionslista hittad men saknar obligatoriska kolumner: ${missingRequired.join(", ")}.`
+          ]
+        };
+      }
+
+      const rows = matrix.slice(headerIndex + 1)
         .map((row) => {
           const workerId = cleanText(row[employeeIndex]);
           const fullName = cleanText(row[nameIndex]);
@@ -250,6 +323,133 @@ const APP_INFO = {
           };
         })
         .filter(Boolean);
+
+      const warnings = [];
+      if (!paymentDate) warnings.push("Transaktionslista: kunde inte läsa utbetalningsdatum från sidhuvudet.");
+
+      return {
+        sourceType: "transactionList",
+        rows,
+        warnings
+      };
+    }
+
+    function parsePayrollDraftRows(matrix) {
+      const payrollIKeywords = ["textfält 1", "textfält 2", "tecken", "anst.id"];
+      const headerIndex = matrix.findIndex((row) => {
+        const labels = row.map((cell) => cleanText(cell).toLowerCase());
+        return labels.includes("arbtag.id")
+          && labels.includes("löneart")
+          && labels.includes("benämning")
+          && labels.includes("belopp")
+          && labels.includes("fr.o.m.")
+          && labels.includes("t.o.m.");
+      });
+      if (headerIndex === -1) return { sourceType: "", rows: [], warnings: [] };
+
+      const header = matrix[headerIndex].map((value) => cleanText(value).toLowerCase());
+      if (header.includes("bokföringsdatum")) {
+        return {
+          sourceType: "",
+          rows: [],
+          warnings: []
+        };
+      }
+
+      const isIFile = payrollIKeywords.some((keyword) => header.includes(keyword));
+      const payrollSourceType = isIFile ? "payrollDraftI" : "payrollDraftHr";
+      const sourceTypeLabel = payrollSourceType === "payrollDraftI" ? "Löneunderlag från I:" : "Löneunderlagslista (Hr+)";
+
+      const employeeIdIndex = header.findIndex((value) => value === "anst.id" || value === "anst.nr");
+      if (employeeIdIndex === -1) return {
+        sourceType: payrollSourceType,
+        rows: [],
+        warnings: [`${sourceTypeLabel} hittat men saknar kolumn för Anst.id/Anst.nr.`]
+      };
+
+      const workerIdIndex = header.findIndex((value) => value === "arbtag.id");
+      const firstNameIndex = header.findIndex((value) => value === "förnamn");
+      const lastNameIndex = header.findIndex((value) => value === "efternamn");
+      const payCodeIndex = header.findIndex((value) => value === "löneart");
+      const descriptionIndex = header.findIndex((value) => value === "benämning");
+      const accountIndex = header.findIndex((value) => value === "konto");
+      const fromDateIndex = header.findIndex((value) => value === "fr.o.m.");
+      const toDateIndex = header.findIndex((value) => value === "t.o.m.");
+      const unitPriceIndex = header.findIndex((value) => value === "apris");
+      const amountIndex = header.findIndex((value) => value === "belopp");
+      const hoursIndex = header.findIndex((value) => value === "tim/antal");
+      const calendarDaysIndex = header.findIndex((value) => value === "kal.dagar");
+      const workDaysIndex = header.findIndex((value) => value === "arb.dagar");
+      const scopeIndex = header.findIndex((value) => value === "omf.");
+      const costPart1Index = header.findIndex((value) => value === "textfält 1");
+      const costPart2Index = header.findIndex((value) => value === "textfält 2");
+      const companyIndex = header.findIndex((value) => value === "företag");
+      const unitIndex = header.findIndex((value) => value === "enhet");
+
+      const missing = [
+        ["Förnamn", firstNameIndex],
+        ["Efternamn", lastNameIndex],
+        ["Löneart", payCodeIndex],
+        ["Benämning", descriptionIndex],
+        ["Belopp", amountIndex]
+      ].filter(([, idx]) => idx === -1).map(([name]) => name);
+
+      const warnings = [];
+      if (missing.length) {
+        warnings.push(`${sourceTypeLabel} hittat men saknar kolumner: ${missing.join(", ")}.`);
+        return {
+          sourceType: payrollSourceType,
+          rows: [],
+          warnings
+        };
+      }
+
+      if (fromDateIndex === -1 || toDateIndex === -1) warnings.push(`${sourceTypeLabel} saknar periodkolumner (Fr.o.m./T.o.m.).`);
+
+      const rows = matrix.slice(headerIndex + 1)
+        .map((row) => {
+          const employeeId = cleanText(row[employeeIdIndex]);
+          const firstName = cleanText(row[firstNameIndex]);
+          const lastName = cleanText(row[lastNameIndex]);
+          const payCode = cleanText(row[payCodeIndex]);
+          const amount = parseNumber(row[amountIndex]);
+          if (!employeeId || !firstName || !lastName || !payCode) return null;
+
+          return {
+            __sourceType: payrollSourceType,
+            Företag: companyIndex >= 0 ? cleanText(row[companyIndex]) : "",
+            Enhet: unitIndex >= 0 ? cleanText(row[unitIndex]) : "",
+            "Arbtag.id": cleanText(row[workerIdIndex]),
+            "Anst.id": employeeId,
+            "Anst.nr": employeeId,
+            Förnamn: firstName,
+            Efternamn: lastName,
+            Löneart: payCode,
+            Beskrivning: cleanText(row[descriptionIndex]),
+            Apris: unitPriceIndex >= 0 ? row[unitPriceIndex] : "",
+            "Tim/Antal": hoursIndex >= 0 ? row[hoursIndex] : "",
+            "Kal.dagar": calendarDaysIndex >= 0 ? row[calendarDaysIndex] : "",
+            "Arb.dagar": workDaysIndex >= 0 ? row[workDaysIndex] : "",
+            "Omf.": scopeIndex >= 0 ? row[scopeIndex] : "",
+            Belopp: amount,
+            "Fr.o.m.": cleanText(row[fromDateIndex]),
+            "T.o.m.": cleanText(row[toDateIndex]),
+            Konto: accountIndex >= 0 ? cleanText(row[accountIndex]) : "",
+            "Kontodel 1": costPart1Index >= 0 ? cleanText(row[costPart1Index]) : "",
+            "Kontodel 2": costPart2Index >= 0 ? cleanText(row[costPart2Index]) : ""
+          };
+        })
+        .filter(Boolean);
+
+      if (!rows.length && missing.length) {
+        warnings.push(`Inga giltiga lönerader kunde tolkas för ${sourceTypeLabel}.`);
+      }
+
+      return {
+        sourceType: payrollSourceType,
+        rows,
+        warnings
+      };
     }
 
     function findTransactionPaymentDate(matrix) {
@@ -282,17 +482,40 @@ const APP_INFO = {
       };
     }
 
-    function validateColumns(firstRow) {
+    function validateColumns(firstRow, sourceTypeHint = "auto") {
       const missing = REQUIRED_FIELDS
         .filter((field) => !resolveColumn(firstRow, field))
         .map((field) => COLUMN_ALIASES[field][0]);
       if (missing.length) {
-        throw new Error(`Saknar förväntade kolumner eller motsvarande fält: ${missing.join(", ")}.`);
+        const sourceTypeLabel = {
+          payrollDraftHr: "Löneunderlagslista (Hr+)",
+          payrollDraftI: "Löneunderlag från I:",
+          accounting: "Bokföringsposter",
+          transactionList: "Transaktionslista",
+          unknown: "ett känt Hr+-format",
+          auto: "exportfilen"
+        }[sourceTypeHint] || "exportfilen";
+        const message = `Saknar förväntade kolumner för ${sourceTypeLabel}: ${missing.join(", ")}.`;
+        throw new Error(sourceTypeHint === "unknown" ? `Filen identifierades inte som ett känt format: ${message}` : message);
       }
     }
 
-    function loadRows(rawRows) {
-      const rows = rawRows.map(normalizeRow).filter((row) => row.employeeName && row.description);
+    function loadRows(rawRows, sourceType = "unknown") {
+      const normalizedRows = rawRows.map(normalizeRow);
+      const droppedRows = normalizedRows.reduce((count, row) => {
+        const hasEmployee = !!(row.employeeName || row.employeeId || row.workerId);
+        const hasItem = !!(row.payCode || row.description);
+        if (!hasEmployee || !hasItem) {
+          return count + 1;
+        }
+        return count;
+      }, 0);
+
+      const rows = normalizedRows.filter((row) => {
+        const hasEmployee = !!(row.employeeName || row.employeeId || row.workerId);
+        const hasItem = !!(row.payCode || row.description);
+        return hasEmployee && hasItem;
+      });
       const employeesByKey = new Map();
 
       for (const row of rows) {
@@ -329,6 +552,18 @@ const APP_INFO = {
       enableControls(true);
       updateMetrics();
       render();
+
+      const warnings = [];
+      if (sourceType !== "payrollDraftHr" && sourceType !== "payrollDraftI") {
+        return { rows, droppedRows, warnings: [] };
+      }
+
+      const payrollTolerance = Math.max(24, Math.ceil(rawRows.length * 0.15));
+      if (droppedRows <= payrollTolerance) {
+        return { rows, droppedRows, warnings: [] };
+      }
+      warnings.push(`${droppedRows} rader saknade nödvändiga uppgifter och tolkades inte.`);
+      return { rows, droppedRows, warnings };
     }
 
     function normalizeRow(raw) {
@@ -398,6 +633,28 @@ const APP_INFO = {
     }
 
     function getSourceType(hasBookingDate, hasAccount, hasScope, explicitSourceType = "") {
+      if (explicitSourceType === "payrollDraftI") {
+        return {
+          sourceKey: "payrollDraftI",
+          sourceLabel: "Löneunderlag från I:",
+          sourceShortLabel: "Löneunderlag",
+          sourceTone: "warning",
+          dateLabel: "Bokföringsdatum",
+          sourceDescription: "Löneunderlaget från löneservice på I:. Visar registrerade lönepåverkande poster och beräkningsunderlag för perioden."
+        };
+      }
+
+      if (explicitSourceType === "payrollDraftHr") {
+        return {
+          sourceKey: "payrollDraftHr",
+          sourceLabel: "Löneunderlagslista (Hr+)",
+          sourceShortLabel: "Löneunderlagslista",
+          sourceTone: "warning",
+          dateLabel: "Bokföringsdatum",
+          sourceDescription: "Löneunderlaget från Ekonomirutin → Löneunderlagslista. Visar registrerade lönepåverkande poster och beräkningsunderlag för vald period."
+        };
+      }
+
       if (explicitSourceType === "transactionList") {
         return {
           sourceKey: "transactionList",
@@ -422,12 +679,12 @@ const APP_INFO = {
 
       if (!hasBookingDate && hasScope) {
         return {
-          sourceKey: "payrollList",
-          sourceLabel: "Löneunderlagslista",
-          sourceShortLabel: "Löneunderlag",
+          sourceKey: "payrollDraftHr",
+          sourceLabel: "Löneunderlagslista (Hr+)",
+          sourceShortLabel: "Löneunderlagslista",
           sourceTone: "warning",
-          dateLabel: "Bokföringsdatum",
-          sourceDescription: "Obs! Ej komplett löneunderlag. Visar registrerade lönepåverkande poster och beräkningsunderlag för perioden. Komplett löneunderlagslista hämtas från Ekonomirutin > Bokföringsposter när underlaget är klart för månaden."
+          dateLabel: "Period",
+          sourceDescription: "Löneunderlagslista från Ekonomirutin. Importen visar registrerade lönepåverkande poster för vald period."
         };
       }
 
@@ -599,13 +856,11 @@ const APP_INFO = {
 
     function renderSourceNotice() {
       if (!state.metadata) return "";
-      if (state.metadata.sourceKey === "payrollList") {
+      if (state.metadata.sourceKey === "payrollDraftI") {
         return `
           <div class="source-notice warning">
             <strong>${escapeHtml(state.metadata.sourceLabel)}:</strong>
-            Obs! Ej komplett löneunderlag. Visar registrerade lönepåverkande poster och beräkningsunderlag för perioden
-            <strong>${escapeHtml(state.metadata.period)}</strong>.
-            Komplett löneunderlagslista hämtas från Ekonomirutin &gt; Bokföringsposter när underlaget är klart för månaden.
+            Detta är filen vi får från löneservice på I:.
           </div>
         `;
       }
@@ -674,7 +929,7 @@ const APP_INFO = {
 
     function getSummaryBoxes(totals) {
       const sourceKey = state.metadata ? state.metadata.sourceKey : "";
-      if (sourceKey === "payrollList") {
+      if (["payrollDraftHr", "payrollDraftI"].includes(sourceKey)) {
         return [
           { label: "Summa poster", amount: totals.visible },
           { label: "Lön/arvoden", amount: totals.pay },
@@ -782,7 +1037,7 @@ const APP_INFO = {
       if ((sourceKey === "transactionList" || sourceKey === "accounting") && totals.netPay) {
         return { label: "Nettolön/utbetalt", amount: totals.netPay };
       }
-      if (sourceKey === "payrollList") {
+      if (["payrollDraftHr", "payrollDraftI"].includes(sourceKey)) {
         return { label: "Summa synliga lönepåverkande poster", amount: totals.visible };
       }
       return { label: "Summa synliga poster", amount: totals.visible };
@@ -946,12 +1201,26 @@ const APP_INFO = {
       if (typeof els.helpDialog.showModal === "function") {
         els.helpDialog.showModal();
       } else {
-        alert(`${APP_INFO.name}\n\nBokförd löneunderlagslista: Ekonomirutin > Bokföringsposter > Mer > Export > Kalkylprogram.\nLönepåverkande poster för period: Ekonomirutin > Löneunderlagslista > Mer > Export > Kalkylprogram.\n\nKontakt: ${APP_INFO.contact}`);
+        showWarning(`${APP_INFO.name}\n\nBokförd löneunderlagslista: Ekonomirutin > Bokföringsposter > Mer > Export > Kalkylprogram.\nLöneunderlag från I: (preliminärt löneunderlag): Ekonomirutin > Löneunderlagslista > Mer > Export > Kalkylprogram.\n\nKontakt: ${APP_INFO.contact}`, "Information");
       }
     }
 
     function closeHelp() {
       if (els.helpDialog.open) els.helpDialog.close();
+    }
+
+    function closeWarning() {
+      if (els.warningDialog.open) els.warningDialog.close();
+    }
+
+    function showWarning(message, title = "Varning") {
+      if (typeof els.warningDialog.showModal !== "function") {
+        alert(`${title}\n\n${message}`);
+        return;
+      }
+      els.warningTitle.textContent = title;
+      els.warningText.textContent = message;
+      els.warningDialog.showModal();
     }
 
     function resetData() {
