@@ -1,9 +1,11 @@
-import { cleanText, parseNumber, formatDate, formatDateRange, formatCurrency, formatOptionalCurrency, formatDecimal, formatInteger, sum, escapeHtml } from "./logic/format.js";
+import { cleanText, parseNumber, formatDate, formatDateRange, formatCurrency, formatOptionalCurrency, formatDecimal, formatInteger, sum, roundCurrency, escapeHtml } from "./logic/format.js";
 import { COLUMN_ALIASES, REQUIRED_FIELDS, resolveColumn, getValue, getText, getNumber } from "./logic/columns.js";
 import { splitPayItem, splitFullName } from "./logic/names.js";
 import { SECTION_ORDER, SECTION_LABELS, TECHNICAL_PATTERNS, categorizeRow } from "./logic/categorize.js";
-import { getSourceType } from "./logic/detect.js";
+import { getSourceType, inferSourceTypeFromRawRows } from "./logic/detect.js";
 import { parseTransactionList, findTransactionPaymentDate, findTransactionCompany } from "./logic/transactions.js";
+import { parsePayrollDraftRows } from "./logic/payrollDraft.js";
+import { isPayrollGrossRow, isPayrollNetPayRow, isPayrollSummaryRow, addPayrollReconciliationRows } from "./logic/payroll.js";
 import { summarizeSingleOrSpan, summarizeDateSpan } from "./logic/dates.js";
 
 const APP_INFO = {
@@ -59,6 +61,10 @@ const els = {
   aboutText: document.getElementById("aboutText"),
   contactText: document.getElementById("contactText"),
   buildInfo: document.getElementById("buildInfo"),
+  warningDialog: document.getElementById("warningDialog"),
+  warningText: document.getElementById("warningText"),
+  warningTitle: document.getElementById("warningTitle"),
+  closeWarningButton: document.getElementById("closeWarningButton"),
 };
 
 els.fileInput.addEventListener("change", handleFileChange);
@@ -99,6 +105,10 @@ els.helpButton.addEventListener("click", openHelp);
 els.closeHelpButton.addEventListener("click", closeHelp);
 els.helpDialog.addEventListener("click", (event) => {
   if (event.target === els.helpDialog) closeHelp();
+});
+els.closeWarningButton.addEventListener("click", closeWarning);
+els.warningDialog.addEventListener("click", (event) => {
+  if (event.target === els.warningDialog) closeWarning();
 });
 
 // Drag-and-drop: släpp en xlsx var som helst på sidan för att importera.
@@ -172,36 +182,95 @@ async function importFile(file) {
     if (!firstSheetName) throw new Error("Filen innehåller inget kalkylblad.");
 
     const sheet = workbook.Sheets[firstSheetName];
-    const rawRows = extractRowsFromSheet(sheet);
-    if (!rawRows.length) throw new Error("Kalkylbladet innehåller inga datarader.");
+    const parseResult = extractRowsFromSheet(sheet);
+    const rawRows = parseResult.rows || [];
+    if (!rawRows.length) {
+      const reason = parseResult.warnings && parseResult.warnings.length
+        ? parseResult.warnings.join("\n")
+        : "Kalkylbladet innehåller inga datarader.";
+      throw new Error(reason);
+    }
+    if (parseResult.sourceType === "unknown") {
+      throw new Error("Okänt filformat. Denna fil matchar inget av de stödda Hr+-formaten.\n\nSe hjälpavsnittet för filer som stöds (Underlagstyper).");
+    }
 
-    validateColumns(rawRows[0]);
-    loadRows(rawRows);
-    setStatus(buildImportSummary(file.name, rawRows.length), state.metadata && state.metadata.sourceKey === "unknown");
+    validateColumns(rawRows[0], parseResult.sourceType || "auto");
+    const importResult = loadRows(rawRows, parseResult.sourceType);
+    if (!state.rows.length) {
+      throw new Error("Ingen komplett eller tolkbar post kunde hittas i filen.");
+    }
+    setStatus(buildImportSummary(file.name, rawRows.length), false);
+
+    const warnings = [
+      ...(parseResult.warnings || []),
+      ...(importResult.warnings || [])
+    ];
+    if (warnings.length) {
+      showWarning(`OBS: filformatet kan ha ändrats.\n\n${warnings.join("\n")}\n\nResultatet kan vara ofullständigt.`, "Information");
+    }
   } catch (error) {
     resetData();
-    setStatus(error.message || "Kunde inte läsa filen.", true);
+    const message = error.message || "Kunde inte läsa filen.";
+    setStatus(message, true);
+    showWarning(message, "Importfel");
   }
 }
 
 function extractRowsFromSheet(sheet) {
   const matrix = window.XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
   const transactionRows = parseTransactionList(matrix);
-  if (transactionRows.length) return transactionRows;
-  return window.XLSX.utils.sheet_to_json(sheet, { defval: "", raw: true });
+  if (transactionRows.rows.length || transactionRows.sourceType === "transactionList") return transactionRows;
+
+  const payrollDraftRows = parsePayrollDraftRows(matrix);
+  if (payrollDraftRows.rows.length || payrollDraftRows.sourceType.includes("payrollDraft")) return payrollDraftRows;
+
+  const fallbackRows = window.XLSX.utils.sheet_to_json(sheet, { defval: "", raw: true });
+  const inferredSourceType = inferSourceTypeFromRawRows(fallbackRows);
+  if (inferredSourceType !== "unknown") {
+    fallbackRows.forEach((row) => {
+      row.__sourceType = inferredSourceType;
+    });
+  }
+  return {
+    sourceType: inferredSourceType,
+    rows: fallbackRows,
+    warnings: inferredSourceType === "unknown" ? [
+      "Kunde inte identifiera filen som ett känt Hr+-exportformat (Bokföringsposter, Transaktionslista eller Löneunderlag från I:)."
+    ] : []
+  };
 }
 
-function validateColumns(firstRow) {
+function validateColumns(firstRow, sourceTypeHint = "auto") {
   const missing = REQUIRED_FIELDS
     .filter((field) => !resolveColumn(firstRow, field))
     .map((field) => COLUMN_ALIASES[field][0]);
   if (missing.length) {
-    throw new Error(`Saknar förväntade kolumner eller motsvarande fält: ${missing.join(", ")}.`);
+    const sourceTypeLabel = {
+      payrollDraftHr: "Löneunderlagslista (Hr+)",
+      payrollDraftI: "Löneunderlag från I:",
+      accounting: "Bokföringsposter",
+      transactionList: "Transaktionslista",
+      unknown: "ett känt Hr+-format",
+      auto: "exportfilen"
+    }[sourceTypeHint] || "exportfilen";
+    const message = `Saknar förväntade kolumner för ${sourceTypeLabel}: ${missing.join(", ")}.`;
+    throw new Error(sourceTypeHint === "unknown" ? `Filen identifierades inte som ett känt format: ${message}` : message);
   }
 }
 
-function loadRows(rawRows) {
-  const rows = rawRows.map(normalizeRow).filter((row) => row.employeeName && row.description);
+function loadRows(rawRows, sourceType = "unknown") {
+  const normalizedRows = rawRows.map(normalizeRow);
+  const droppedRows = normalizedRows.reduce((count, row) => {
+    const hasEmployee = !!(row.employeeName || row.employeeId || row.workerId);
+    const hasItem = !!(row.payCode || row.description);
+    return (!hasEmployee || !hasItem) ? count + 1 : count;
+  }, 0);
+
+  const rows = normalizedRows.filter((row) => {
+    const hasEmployee = !!(row.employeeName || row.employeeId || row.workerId);
+    const hasItem = !!(row.payCode || row.description);
+    return hasEmployee && hasItem;
+  });
   const employeesByKey = new Map();
 
   for (const row of rows) {
@@ -238,6 +307,15 @@ function loadRows(rawRows) {
   enableControls(true);
   updateMetrics();
   render();
+
+  if (sourceType !== "payrollDraftHr" && sourceType !== "payrollDraftI") {
+    return { rows, droppedRows, warnings: [] };
+  }
+  const payrollTolerance = Math.max(24, Math.ceil(rawRows.length * 0.15));
+  if (droppedRows <= payrollTolerance) {
+    return { rows, droppedRows, warnings: [] };
+  }
+  return { rows, droppedRows, warnings: [`${droppedRows} rader saknade nödvändiga uppgifter och tolkades inte.`] };
 }
 
 function buildImportSummary(fileName, rawRowCount) {
@@ -518,13 +596,11 @@ function renderPrintHeader(title) {
 
 function renderSourceNotice() {
   if (!state.metadata) return "";
-  if (state.metadata.sourceKey === "payrollList") {
+  if (state.metadata.sourceKey === "payrollDraftI") {
     return `
       <div class="source-notice warning">
         <strong>${escapeHtml(state.metadata.sourceLabel)}:</strong>
-        Obs! Ej komplett löneunderlag. Visar registrerade lönepåverkande poster och beräkningsunderlag för perioden
-        <strong>${escapeHtml(state.metadata.period)}</strong>.
-        Komplett löneunderlagslista hämtas från Ekonomirutin &gt; Bokföringsposter när underlaget är klart för månaden.
+        Detta är filen vi får från löneservice på I:.
       </div>
     `;
   }
@@ -560,7 +636,7 @@ function renderReportToolbar(title, detail) {
 
 function renderEmployeeReport(employee, isAllReport = false) {
   const visibleRows = getReportRows(employee);
-  const sections = groupRowsBySection(visibleRows);
+  const sections = groupRowsBySection(getSectionRows(visibleRows));
   const totals = getSummaryTotals(employee, visibleRows);
   const summaryBoxes = getSummaryBoxes(totals);
 
@@ -593,7 +669,18 @@ function renderSummaryBox(label, amount) {
 
 function getSummaryBoxes(totals) {
   const sourceKey = state.metadata ? state.metadata.sourceKey : "";
-  if (sourceKey === "payrollList") {
+  if (sourceKey === "payrollDraftI") {
+    return [
+      { label: "Bruttolön", amount: totals.gross },
+      { label: "Skatt/avdrag", amount: totals.tax },
+      { label: "Nettolön", amount: totals.netPay },
+      { label: "Lön/arvoden", amount: totals.pay },
+      { label: "Ers./utlägg", amount: totals.reimbursement },
+      { label: "Frånvaro/sem.", amount: totals.absence }
+    ];
+  }
+
+  if (sourceKey === "payrollDraftHr") {
     return [
       { label: "Summa poster", amount: totals.visible },
       { label: "Lön/arvoden", amount: totals.pay },
@@ -676,22 +763,39 @@ function groupRowsBySection(rows) {
   }, {});
 }
 
+function getSectionRows(rows) {
+  const sourceKey = state.metadata ? state.metadata.sourceKey : "";
+  if (sourceKey !== "payrollDraftI") return rows;
+  return rows.filter((row) => !isPayrollGrossRow(row));
+}
+
 function getSummaryTotals(employee, visibleRows) {
-  const pay = sum(visibleRows.filter((row) => row.category === "pay"), "amount");
-  const absence = sum(visibleRows.filter((row) => row.category === "absence"), "amount");
-  const reimbursement = sum(visibleRows.filter((row) => row.category === "reimbursement"), "amount");
-  const other = sum(visibleRows.filter((row) => row.category === "other"), "amount");
-  const tax = sum(visibleRows.filter((row) => row.category === "tax"), "amount");
-  const netPay = Math.abs(sum(visibleRows.filter((row) => row.category === "net"), "amount"));
+  const sourceKey = state.metadata ? state.metadata.sourceKey : "";
+  const explicitGross = sum(visibleRows.filter((row) => isPayrollGrossRow(row)), "amount");
+  const explicitNet = sum(visibleRows.filter((row) => isPayrollNetPayRow(row)), "amount");
+  const transactionRows = sourceKey === "payrollDraftI"
+    ? visibleRows.filter((row) => !isPayrollSummaryRow(row))
+    : visibleRows;
+  const pay = sum(transactionRows.filter((row) => row.category === "pay"), "amount");
+  const absence = sum(transactionRows.filter((row) => row.category === "absence"), "amount");
+  const reimbursement = sum(transactionRows.filter((row) => row.category === "reimbursement"), "amount");
+  const other = sum(transactionRows.filter((row) => row.category === "other"), "amount");
+  const tax = sum(transactionRows.filter((row) => row.category === "tax"), "amount");
+  const netPay = Math.abs(explicitNet || sum(visibleRows.filter((row) => row.category === "net"), "amount"));
+  const gross = explicitGross || pay + absence + reimbursement + other;
   return {
-    visible: sum(visibleRows, "amount"),
-    gross: pay + absence + reimbursement + other,
+    visible: sum(transactionRows, "amount"),
+    gross,
     pay,
     absence,
     reimbursement,
     other,
     tax,
-    netPay
+    netPay,
+    explicitGross,
+    explicitNet,
+    usesExplicitGross: sourceKey === "payrollDraftI" && Boolean(explicitGross),
+    usesExplicitNet: sourceKey === "payrollDraftI" && Boolean(explicitNet)
   };
 }
 
@@ -701,7 +805,13 @@ function getEmployeeListTotal(visibleRows) {
   if ((sourceKey === "transactionList" || sourceKey === "accounting") && totals.netPay) {
     return { label: "Nettolön/utbetalt", amount: totals.netPay };
   }
-  if (sourceKey === "payrollList") {
+  if (["payrollDraftHr", "payrollDraftI"].includes(sourceKey)) {
+    if (sourceKey === "payrollDraftI" && totals.usesExplicitNet) {
+      return { label: "Nettolön", amount: totals.netPay };
+    }
+    if (sourceKey === "payrollDraftI" && totals.usesExplicitGross) {
+      return { label: "Bruttolön", amount: totals.gross };
+    }
     return { label: "Summa synliga lönepåverkande poster", amount: totals.visible };
   }
   return { label: "Summa synliga poster", amount: totals.visible };
@@ -782,7 +892,9 @@ function getVisibleRows(employee) {
 
 function getReportRows(employee) {
   const rows = getVisibleRows(employee);
-  return state.mergeSplits ? mergeCostSplitRows(rows) : rows;
+  const reportRows = state.mergeSplits ? mergeCostSplitRows(rows) : rows;
+  const sourceKey = state.metadata ? state.metadata.sourceKey : "";
+  return addPayrollReconciliationRows(reportRows, sourceKey);
 }
 
 function mergeCostSplitRows(rows) {
@@ -909,12 +1021,26 @@ function openHelp() {
   if (typeof els.helpDialog.showModal === "function") {
     els.helpDialog.showModal();
   } else {
-    alert(`${APP_INFO.name}\n\nBokförd löneunderlagslista: Ekonomirutin > Bokföringsposter > Mer > Export > Kalkylprogram.\nLönepåverkande poster för period: Ekonomirutin > Löneunderlagslista > Mer > Export > Kalkylprogram.\n\nKontakt: ${APP_INFO.contact}`);
+    showWarning(`${APP_INFO.name}\n\nBokförd löneunderlagslista: Ekonomirutin > Bokföringsposter > Mer > Export > Kalkylprogram.\nLöneunderlag från I: (preliminärt löneunderlag): Ekonomirutin > Löneunderlagslista > Mer > Export > Kalkylprogram.\n\nKontakt: ${APP_INFO.contact}`, "Information");
   }
 }
 
 function closeHelp() {
   if (els.helpDialog.open) els.helpDialog.close();
+}
+
+function closeWarning() {
+  if (els.warningDialog.open) els.warningDialog.close();
+}
+
+function showWarning(message, title = "Varning") {
+  if (typeof els.warningDialog.showModal !== "function") {
+    alert(`${title}\n\n${message}`);
+    return;
+  }
+  els.warningTitle.textContent = title;
+  els.warningText.textContent = message;
+  els.warningDialog.showModal();
 }
 
 function resetData() {

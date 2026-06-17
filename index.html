@@ -131,7 +131,8 @@
         <h3>Underlagstyper</h3>
         <p><strong>Bokföringsposter</strong> används för att granska bokförd löneunderlagslista när underlaget är klart för månaden.</p>
         <p><strong>Transaktionslista</strong> visar lönearter, preliminärskatt och utbetald nettolön när löneservice har börjat arbeta med lönerna. Den kan ge bättre inblick än löneunderlagslistan, men behöver inte betyda att månaden är helt färdig.</p>
-        <p><strong>Löneunderlagslista</strong> visar registrerade lönepåverkande poster och beräkningsunderlag för vald period, men är inte ett komplett löneunderlag.</p>
+        <p><strong>Löneunderlagslista (Hr+)</strong> från <strong>Ekonomirutin → Löneunderlagslista</strong> visar registrerade lönepåverkande poster för vald period.</p>
+        <p><strong>Löneunderlag från I:</strong> Detta är filen vi får från löneservice på I:.</p>
       </section>
       <section>
         <h3>Dataskydd</h3>
@@ -151,6 +152,18 @@
         <h3>Kontakt</h3>
         <p id="contactText"></p>
       </section>
+    </div>
+  </dialog>
+
+  <dialog id="warningDialog" class="warning-dialog" aria-labelledby="warningTitle">
+    <div class="warning-content">
+      <div class="warning-header">
+        <h3 id="warningTitle">Varning</h3>
+      </div>
+      <div id="warningText" class="warning-message"></div>
+      <div class="warning-actions">
+        <button id="closeWarningButton" type="button" class="primary">OK</button>
+      </div>
     </div>
   </dialog>
 
